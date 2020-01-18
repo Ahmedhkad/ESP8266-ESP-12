@@ -1,0 +1,183 @@
+//Good pins nodeMCU
+//GPIO16  > D0        *HIGH on boot. then ~1V
+//GPIO5   > D1        #GOOD for sensors
+//GPIO4   > D2 (PWM)  #GOOD
+//GPIO0   > D3        *Boot failure in pulled low! 
+//GPIO2   > D4        *Boot failure in pulled low!  *HIGH on boot, built-in led
+//GPIO14  > D5 (PWM)  #GOOD *100ms high then low
+//GPIO12  > D6 (PWM)  #GOOD *100ms high then low
+//GPIO13  > D7        #GOOD *HIGH on boot OR *100ms high then low
+//GPIO15  > D8 (PWM)  *boot failuer in pulled HIGHT!
+
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include "DHT.h"
+
+#define DHTPIN 4       //GPIO4 esp-12x
+#define DHTTYPE DHT11   // DHT 11
+DHT dht(DHTPIN, DHTTYPE);
+
+// Update these with values suitable for your network.
+const char* ssid = "*********-iot";
+const char* password = "***********";
+const char* mqtt_server = "192.168.1.200";
+
+//MQTT TOPICS
+char* LifeTopic = "/ESP12X/Life";
+char* ConnectedTopic = "/ESP12X/Connected";
+char* TempTopic = "/ESP12X/Temp";
+char* HuTopic = "/ESP12X/Hu";
+char* RelayTopic = "/ESP12X/Relay";
+char* RelayTopic2 = "/ESP12X/Relay2";
+char* AnalogTopic = "/ESP12X/Sensor";
+
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+int sensorPin = A0;    // input for LDR or rain sensor
+int relayPin = 5;    // Relay on GPIO5 esp-12x
+int relayPin2 = 12;    // Relay on GPIO4 esp-12x
+
+
+long lastMsg = 0;
+char msg[50];
+char msg2[50];
+int value = 0;
+
+
+void setup_wifi() {
+//digitalWrite(relayPin, HIGH);
+  delay(10);
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  randomSeed(micros());
+
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.println("] ");
+  
+  if(payload[0] == 'O'){
+    digitalWrite(relayPin, HIGH);           //turn the light on 
+    client.publish(RelayTopic, "Opened");
+  }
+  else if (payload[0] == 'C'){
+    digitalWrite(relayPin, LOW);          //turn the light off 
+    client.publish(RelayTopic, "Closed");
+  }
+      if(payload[0] == '1'){
+    digitalWrite(relayPin2, HIGH);           //turn the light on 
+    client.publish(RelayTopic2, "Opened2");
+  }
+  else if (payload[0] == '0'){
+    digitalWrite(relayPin, LOW);          //turn the light off 
+    client.publish(RelayTopic2, "Closed2");
+  }
+   else if (payload[0] == 'H') {
+    checkDHT();
+   }
+  
+   else if (payload[0] == 'S') {
+    checkSensor();
+  }
+     
+
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = "ESP-12X-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      client.publish(ConnectedTopic, "ESP-12X connected");
+      // ... and resubscribe
+      client.subscribe("ESP12XNude");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(3000);
+    }
+  }
+}
+
+void setup() {
+  pinMode(relayPin, OUTPUT);     // Initialize the relay pin as an output
+  pinMode(relayPin2, OUTPUT);     // Initialize the relay2 pin as an output
+  Serial.begin(9600);
+  dht.begin();
+  setup_wifi();
+  client.setServer(mqtt_server, 21883);
+  client.setCallback(callback);
+  
+}
+
+void loop() {
+
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  long now = millis();
+  if (now - lastMsg > 5000) {
+    lastMsg = now;
+    ++value;
+    snprintf (msg, 50, "%ld", value);
+    Serial.print("Publish message: ");
+    Serial.println(msg);
+    client.publish(LifeTopic, msg);
+  }
+}
+
+void checkDHT() {
+
+  float h = dht.readHumidity();  // Read HUmidity
+  char buffer2[10];
+  dtostrf(h, 0, 0, buffer2);
+  client.publish(HuTopic, buffer2);
+
+  float t = dht.readTemperature();  // Read temperature
+  char buffer3[10];
+  dtostrf(t, 0, 0, buffer3);
+  client.publish(TempTopic, buffer3);
+
+  float f = dht.readTemperature(true);
+    if (isnan(h) || isnan(t) || isnan(f)) {
+      Serial.println(F("Failed to read from DHT sensor!"));
+      client.publish(TempTopic, "DHT-Err");
+      return;
+}
+}
+
+void checkSensor() {
+  int value = analogRead(sensorPin);
+  char buffer6[10];
+  dtostrf(value, 0, 0, buffer6);
+  client.publish(AnalogTopic, buffer6);
+  
+}
